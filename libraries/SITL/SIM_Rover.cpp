@@ -32,7 +32,7 @@ SimRover::SimRover(const char *home_str, const char *frame_str) :
     skid_turn_rate(140), // degrees/sec
     skid_steering(false)
 {
-    skid_steering = strstr(frame_str, "skid") != NULL;
+    skid_steering = strstr(frame_str, "skid") != nullptr;
 
     if (skid_steering) {
         printf("SKID Steering Rover Simulation Started\n");
@@ -151,6 +151,7 @@ void SimRover::update(const struct sitl_input &input)
 
     // update lat/lon/altitude
     update_position();
+    time_advance();
 
     // update magnetic field
     update_mag_field_bf();

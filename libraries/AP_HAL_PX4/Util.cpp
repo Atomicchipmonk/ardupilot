@@ -61,7 +61,7 @@ bool PX4Util::run_debug_shell(AP_HAL::BetterStream *stream)
     dup2(fd, 1);
     dup2(fd, 2);
     
-    nsh_consolemain(0, NULL);
+    nsh_consolemain(0, nullptr);
     
     // this shouldn't happen
     hal.console->printf("shell exited\n");
@@ -73,6 +73,10 @@ bool PX4Util::run_debug_shell(AP_HAL::BetterStream *stream)
  */
 enum PX4Util::safety_state PX4Util::safety_switch_state(void)
 {
+#if !HAL_HAVE_SAFETY_SWITCH
+    return AP_HAL::Util::SAFETY_NONE;
+#endif
+
     if (_safety_handle == -1) {
         _safety_handle = orb_subscribe(ORB_ID(safety));
     }
@@ -95,8 +99,8 @@ enum PX4Util::safety_state PX4Util::safety_switch_state(void)
 void PX4Util::set_system_clock(uint64_t time_utc_usec)
 {
     timespec ts;
-    ts.tv_sec = time_utc_usec/1.0e6f;
-    ts.tv_nsec = (time_utc_usec % 1000000) * 1000;
+    ts.tv_sec = time_utc_usec/1000000ULL;
+    ts.tv_nsec = (time_utc_usec % 1000000ULL) * 1000ULL;
     clock_settime(CLOCK_REALTIME, &ts);    
 }
 
@@ -110,10 +114,16 @@ bool PX4Util::get_system_id(char buf[40])
     get_board_serial(serialid);
 #if defined(CONFIG_ARCH_BOARD_PX4FMU_V1)
     const char *board_type = "PX4v1";
+#elif defined(CONFIG_ARCH_BOARD_PX4FMU_V3)
+    const char *board_type = "PX4v3";
 #elif defined(CONFIG_ARCH_BOARD_PX4FMU_V2)
     const char *board_type = "PX4v2";
 #elif defined(CONFIG_ARCH_BOARD_PX4FMU_V4)
     const char *board_type = "PX4v4";
+#elif defined(CONFIG_ARCH_BOARD_PX4FMU_V4PRO)
+    const char *board_type = "PX4v4PRO";
+#elif defined(CONFIG_ARCH_BOARD_AEROFC_V1)
+    const char *board_type = "AEROFCv1";
 #else
     const char *board_type = "PX4v?";
 #endif
@@ -152,7 +162,7 @@ PX4Util::perf_counter_t PX4Util::perf_alloc(PX4Util::perf_counter_type t, const 
         px4_t = ::PC_INTERVAL;
         break;
     default:
-        return NULL;
+        return nullptr;
     }
     return (perf_counter_t)::perf_alloc(px4_t, name);
 }
@@ -222,6 +232,33 @@ void PX4Util::set_imu_temp(float current)
 void PX4Util::set_imu_target_temp(int8_t *target)
 {
     _heater.target = target;
+}
+
+
+extern "C" {
+    extern void *fat_dma_alloc(size_t);
+    extern void fat_dma_free(void *, size_t);
+}
+
+/*
+  allocate DMA-capable memory if possible. Otherwise return normal
+  memory.
+*/
+void *PX4Util::dma_allocate(size_t size)
+{
+#if !defined(CONFIG_ARCH_BOARD_PX4FMU_V1)
+    return fat_dma_alloc(size);
+#else
+    return malloc(size);
+#endif
+}
+void PX4Util::dma_free(void *ptr, size_t size)
+{
+#if !defined(CONFIG_ARCH_BOARD_PX4FMU_V1)
+    fat_dma_free(ptr, size);
+#else
+    return free(ptr);
+#endif
 }
 
 #endif // CONFIG_HAL_BOARD == HAL_BOARD_PX4

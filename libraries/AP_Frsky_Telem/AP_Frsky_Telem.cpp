@@ -20,6 +20,8 @@
    FRSKY Telemetry library
 */
 #include "AP_Frsky_Telem.h"
+#include <GCS_MAVLink/GCS.h>
+
 extern const AP_HAL::HAL& hal;
 
 ObjectArray<mavlink_statustext_t> AP_Frsky_Telem::_statustext_queue(FRSKY_TELEM_PAYLOAD_STATUS_CAPACITY);
@@ -34,7 +36,7 @@ AP_Frsky_Telem::AP_Frsky_Telem(AP_AHRS &ahrs, const AP_BattMonitor &battery, con
 /*
  * init - perform required initialisation
  */
-void AP_Frsky_Telem::init(const AP_SerialManager &serial_manager, const char *firmware_str, const uint8_t mav_type, AP_Float *fs_batt_voltage, AP_Float *fs_batt_mah, uint32_t *ap_valuep)
+void AP_Frsky_Telem::init(const AP_SerialManager &serial_manager, const char *firmware_str, const uint8_t mav_type, const AP_Float *fs_batt_voltage, const AP_Float *fs_batt_mah, const uint32_t *ap_valuep)
 {
     // check for protocol configured for a serial port - only the first serial port with one of these protocols will then run (cannot have FrSky on multiple serial ports)
     if ((_port = serial_manager.find_serial(AP_SerialManager::SerialProtocol_FrSky_D, 0))) {
@@ -43,6 +45,8 @@ void AP_Frsky_Telem::init(const AP_SerialManager &serial_manager, const char *fi
         _protocol = AP_SerialManager::SerialProtocol_FrSky_SPort; // FrSky SPort protocol (X-receivers)
     } else if ((_port = serial_manager.find_serial(AP_SerialManager::SerialProtocol_FrSky_SPort_Passthrough, 0))) {
         _protocol = AP_SerialManager::SerialProtocol_FrSky_SPort_Passthrough; // FrSky SPort and SPort Passthrough (OpenTX) protocols (X-receivers)
+        // make frsky_telemetry available to GCS_MAVLINK (used to queue statustext messages from GCS_MAVLINK)
+        gcs().register_frsky_telemetry_callback(this);
         // add firmware and frame info to message queue
         queue_message(MAV_SEVERITY_INFO, firmware_str);
         // save main parameters locally
@@ -50,13 +54,14 @@ void AP_Frsky_Telem::init(const AP_SerialManager &serial_manager, const char *fi
         _params.fs_batt_voltage = fs_batt_voltage; // failsafe battery voltage in volts
         _params.fs_batt_mah = fs_batt_mah; // failsafe reserve capacity in mAh
         if (ap_valuep == nullptr) { // ap bit-field
+            _ap.value = 0x2000; // set "initialised" to 1 for rover and plane
             _ap.valuep = &_ap.value;
         } else {
             _ap.valuep = ap_valuep;
         }
     }
     
-    if (_port != NULL) {
+    if (_port != nullptr) {
         hal.scheduler->register_io_process(FUNCTOR_BIND_MEMBER(&AP_Frsky_Telem::tick, void));
         // we don't want flow control for either protocol
         _port->set_flow_control(AP_HAL::UARTDriver::FLOW_CONTROL_DISABLE);
@@ -93,8 +98,14 @@ void AP_Frsky_Telem::send_SPort_Passthrough(void)
     if ((prev_byte == START_STOP_SPORT) && (_passthrough.new_byte == SENSOR_ID_28)) { // byte 0x7E is the header of each poll request
         if (_passthrough.send_attiandrng) { // skip other data, send attitude (roll, pitch) and range only this iteration
             _passthrough.send_attiandrng = false; // next iteration, check if we should send something other
-        } else { // check if there's other data to send
+        } else { // send other sensor data if it's time for them, and reset the corresponding timer if sent
             _passthrough.send_attiandrng = true; // next iteration, send attitude b/c it needs frequent updates to remain smooth
+            uint32_t now = AP_HAL::millis();
+            if ((now - _passthrough.params_timer) >= 1000) {
+                send_uint32(DIY_FIRST_ID+7, calc_param());
+                _passthrough.params_timer = AP_HAL::millis();
+                return;
+            }
             // build message queue for sensor_status_flags
             check_sensor_status_flags();
             // build message queue for ekf_status
@@ -104,52 +115,38 @@ void AP_Frsky_Telem::send_SPort_Passthrough(void)
                 send_uint32(DIY_FIRST_ID, _msg_chunk.chunk);
                 return;
             }
-            // send other sensor data if it's time for them, and reset the corresponding timer if sent
-            uint32_t now = AP_HAL::millis();
-            if (((now - _passthrough.params_timer) > 1000) && (!AP_Notify::flags.armed)) {
-                send_uint32(DIY_FIRST_ID+7, calc_param());
-                _passthrough.params_timer = AP_HAL::millis();
+            if ((now - _passthrough.ap_status_timer) >= 500) {
+                if (((*_ap.valuep) & AP_INITIALIZED_FLAG) > 0) {  // send ap status only once vehicle has been initialised
+                    send_uint32(DIY_FIRST_ID+1, calc_ap_status());
+                    _passthrough.ap_status_timer = AP_HAL::millis();
+                }
                 return;
-            } else if ((now - _passthrough.ap_status_timer) > 500) {
-                send_uint32(DIY_FIRST_ID+1, calc_ap_status());
-                _passthrough.ap_status_timer = AP_HAL::millis();
-                return;
-            } else if ((now - _passthrough.batt_timer) > 1000) {
+            }
+            if ((now - _passthrough.batt_timer) >= 1000) {
                 send_uint32(DIY_FIRST_ID+3, calc_batt());
                 _passthrough.batt_timer = AP_HAL::millis();
                 return;
-            } else if ((now - _passthrough.gps_status_timer) > 1000) {
+            }
+            if ((now - _passthrough.gps_status_timer) >= 1000) {
                 send_uint32(DIY_FIRST_ID+2, calc_gps_status());
                 _passthrough.gps_status_timer = AP_HAL::millis();
                 return;
-            } else if ((now - _passthrough.home_timer) > 500) {
+            }
+            if ((now - _passthrough.home_timer) >= 500) {
                 send_uint32(DIY_FIRST_ID+4, calc_home());
                 _passthrough.home_timer = AP_HAL::millis();
                 return;
-            } else if ((now - _passthrough.velandyaw_timer) > 500) {
+            }
+            if ((now - _passthrough.velandyaw_timer) >= 500) {
                 send_uint32(DIY_FIRST_ID+5, calc_velandyaw());
                 _passthrough.velandyaw_timer = AP_HAL::millis();
                 return;
-            } else if ((now - _passthrough.gps_latlng_timer) > 1000) {
+            }
+            if ((now - _passthrough.gps_latlng_timer) >= 1000) {
                 send_uint32(GPS_LONG_LATI_FIRST_ID, calc_gps_latlng(&_passthrough.send_latitude)); // gps latitude or longitude
                 if (!_passthrough.send_latitude) { // we've cycled and sent one each of longitude then latitude, so reset the timer
                     _passthrough.gps_latlng_timer = AP_HAL::millis();
                 }
-                return;
-            } else if ((now - _passthrough.vario_timer) > 500) {
-                Vector3f velNED;
-                if (_ahrs.get_velocity_NED(velNED)) {
-                    send_uint32(VARIO_FIRST_ID, (int32_t)roundf(-velNED.z*100)); // vertical velocity in cm/s, +ve up
-                }
-                _passthrough.vario_timer = AP_HAL::millis();
-                return;
-            } else if ((now - _passthrough.alt_timer) > 1000) {
-                send_uint32(ALT_FIRST_ID, (int32_t)_relative_home_altitude); // altitude in cm above home position
-                _passthrough.alt_timer = AP_HAL::millis();
-                return;
-            } else if ((now - _passthrough.vfas_timer) > 1000) {
-                send_uint32(VFAS_FIRST_ID, (uint32_t)roundf(_battery.voltage() * 100.0f)); // battery pack voltage in volts
-                _passthrough.vfas_timer = AP_HAL::millis();
                 return;
             }
         }
@@ -277,7 +274,7 @@ void AP_Frsky_Telem::send_D(void)
 {
     uint32_t now = AP_HAL::millis();
     // send frame1 every 200ms
-    if (now - _D.last_200ms_frame > 200) {
+    if (now - _D.last_200ms_frame >= 200) {
         _D.last_200ms_frame = now;
         send_uint16(DATA_ID_TEMP2, (uint16_t)(_ahrs.get_gps().num_sats() * 10 + _ahrs.get_gps().status())); // send GPS status and number of satellites as num_sats*10 + status (to fit into a uint8_t)
         send_uint16(DATA_ID_TEMP1, _ap.control_mode); // send flight mode
@@ -289,7 +286,7 @@ void AP_Frsky_Telem::send_D(void)
         send_uint16(DATA_ID_BARO_ALT_AP, _gps.alt_nav_cm); // send nav altitude decimal part
     }
     // send frame2 every second
-    if (now - _D.last_1000ms_frame > 1000) {
+    if (now - _D.last_1000ms_frame >= 1000) {
         _D.last_1000ms_frame = now;
         send_uint16(DATA_ID_GPS_COURS_BP, (uint16_t)((_ahrs.yaw_sensor / 100) % 360)); // send heading in degree based on AHRS and not GPS
         calc_gps_position();
@@ -424,34 +421,30 @@ bool AP_Frsky_Telem::get_next_msg_chunk(void)
         return false;
     }
 
-    if (_msg_chunk.repeats == 0) {
-        _msg_chunk.chunk = 0;
-        uint8_t character = _statustext_queue[0]->text[_msg_chunk.char_index++];
-        if (character) {
-            _msg_chunk.chunk |= character<<24;
+    if (_msg_chunk.repeats == 0) { // if it's the first time get_next_msg_chunk is called for a given chunk
+        uint8_t character = 0;
+        _msg_chunk.chunk = 0; // clear the 4 bytes of the chunk buffer
+
+        for (int i = 3; i > -1 && _msg_chunk.char_index < sizeof(_statustext_queue[0]->text); i--) {
             character = _statustext_queue[0]->text[_msg_chunk.char_index++];
-            if (character) {
-                _msg_chunk.chunk |= character<<16;
-                character = _statustext_queue[0]->text[_msg_chunk.char_index++];
-                if (character) {
-                    _msg_chunk.chunk |= character<<8;
-                    character = _statustext_queue[0]->text[_msg_chunk.char_index++];
-                    if (character) {
-                        _msg_chunk.chunk |= character;
-                    }
-                }
+
+            if (!character) {
+                break;
             }
+
+            _msg_chunk.chunk |= character << i * 8;
         }
-        if (!character) { // we've reached the end of the message (string terminated by '\0')
-            _msg_chunk.char_index = 0;
+
+        if (!character || (_msg_chunk.char_index == sizeof(_statustext_queue[0]->text))) { // we've reached the end of the message (string terminated by '\0' or last character of the string has been processed)
+            _msg_chunk.char_index = 0; // reset index to get ready to process the next message
             // add severity which is sent as the MSB of the last three bytes of the last chunk (bits 24, 16, and 8) since a character is on 7 bits
             _msg_chunk.chunk |= (_statustext_queue[0]->severity & 0x4)<<21;
             _msg_chunk.chunk |= (_statustext_queue[0]->severity & 0x2)<<14;
             _msg_chunk.chunk |= (_statustext_queue[0]->severity & 0x1)<<7;
         }
     }
-    _msg_chunk.repeats++;
-    if (_msg_chunk.repeats > 2) { // repeat each message chunk 3 times to ensure transmission
+
+    if (_msg_chunk.repeats++ > 2) { // repeat each message chunk 3 times to ensure transmission
         _msg_chunk.repeats = 0;
         if (_msg_chunk.char_index == 0) { // if we're ready for the next message
             _statustext_queue.remove(0);
@@ -485,7 +478,7 @@ void AP_Frsky_Telem::check_sensor_status_flags(void)
 {
     uint32_t now = AP_HAL::millis();
 
-    if ((now - check_sensor_status_timer) > 5000) { // prevent repeating any system_status messages unless 5 seconds have passed
+    if ((now - check_sensor_status_timer) >= 5000) { // prevent repeating any system_status messages unless 5 seconds have passed
         // only one error is reported at a time (in order of preference). Same setup and displayed messages as Mission Planner.
         if ((_ap.sensor_status_flags & MAV_SYS_STATUS_SENSOR_GPS) > 0) {
             queue_message(MAV_SEVERITY_CRITICAL, "Bad GPS Health");
@@ -539,7 +532,7 @@ void AP_Frsky_Telem::check_ekf_status(void)
     Vector2f offset;
     if (_ahrs.get_variances(velVar, posVar, hgtVar, magVar, tasVar, offset)) {
         uint32_t now = AP_HAL::millis();
-        if ((now - check_ekf_status_timer) > 10000) { // prevent repeating any ekf_status message unless 10 seconds have passed
+        if ((now - check_ekf_status_timer) >= 10000) { // prevent repeating any ekf_status message unless 10 seconds have passed
             // multiple errors can be reported at a time. Same setup as Mission Planner.
             if (velVar >= 1) {
                 queue_message(MAV_SEVERITY_CRITICAL, "Error velocity variance");
@@ -584,12 +577,12 @@ uint32_t AP_Frsky_Telem::calc_param(void)
         break;
     case 2:
         if (_params.fs_batt_voltage != nullptr) {
-            param = (uint32_t)roundf(*_params.fs_batt_voltage * 100.0f); // battery failsafe voltage in centivolts
+            param = (uint32_t)roundf((*_params.fs_batt_voltage) * 100.0f); // battery failsafe voltage in centivolts
         }
         break;
     case 3:
         if (_params.fs_batt_mah != nullptr) {
-            param = (uint32_t)roundf(*_params.fs_batt_mah);              // battery failsafe capacity in mAh
+            param = (uint32_t)roundf((*_params.fs_batt_mah));              // battery failsafe capacity in mAh
         }
         break;
     case 4:
@@ -612,20 +605,20 @@ uint32_t AP_Frsky_Telem::calc_gps_latlng(bool *send_latitude)
     const Location &loc = _ahrs.get_gps().location(0); // use the first gps instance (same as in send_mavlink_gps_raw)
 
     // alternate between latitude and longitude
-    if (*send_latitude == true) {
+    if ((*send_latitude) == true) {
         if (loc.lat < 0) {
             latlng = ((abs(loc.lat)/100)*6) | 0x40000000;
         } else {
             latlng = ((abs(loc.lat)/100)*6);
         }
-        *send_latitude = false;
+        (*send_latitude) = false;
     } else {
         if (loc.lng < 0) {
             latlng = ((abs(loc.lng)/100)*6) | 0xC0000000;
         } else {
             latlng = ((abs(loc.lng)/100)*6) | 0x80000000;
         }
-        *send_latitude = true;
+        (*send_latitude) = true;
     }
     return latlng;
 }
@@ -640,12 +633,12 @@ uint32_t AP_Frsky_Telem::calc_gps_status(void)
 
     // number of GPS satellites visible (limit to 15 (0xF) since the value is stored on 4 bits)
     gps_status = (_ahrs.get_gps().num_sats() < GPS_SATS_LIMIT) ? _ahrs.get_gps().num_sats() : GPS_SATS_LIMIT;
-    // GPS receiver status (limit to 3 (0x3) since the value is stored on 2 bits: NO_GPS = 0, NO_FIX = 1, GPS_OK_FIX_2D = 2, GPS_OK_FIX_3D or GPS_OK_FIX_3D_DGPS or GPS_OK_FIX_3D_RTK = 3)
+    // GPS receiver status (limit to 0-3 (0x3) since the value is stored on 2 bits: NO_GPS = 0, NO_FIX = 1, GPS_OK_FIX_2D = 2, GPS_OK_FIX_3D or GPS_OK_FIX_3D_DGPS or GPS_OK_FIX_3D_RTK_FLOAT or GPS_OK_FIX_3D_RTK_FIXED = 3)
     gps_status |= ((_ahrs.get_gps().status() < GPS_STATUS_LIMIT) ? _ahrs.get_gps().status() : GPS_STATUS_LIMIT)<<GPS_STATUS_OFFSET;
     // GPS horizontal dilution of precision in dm
     gps_status |= prep_number(roundf(_ahrs.get_gps().get_hdop() * 0.1f),2,1)<<GPS_HDOP_OFFSET; 
-    // GPS vertical dilution of precision in dm
-    gps_status |= prep_number(roundf(_ahrs.get_gps().get_vdop() * 0.1f),2,1)<<GPS_VDOP_OFFSET; 
+    // GPS receiver advanced status (0: no advanced fix, 1: GPS_OK_FIX_3D_DGPS, 2: GPS_OK_FIX_3D_RTK_FLOAT, 3: GPS_OK_FIX_3D_RTK_FIXED)
+    gps_status |= ((_ahrs.get_gps().status() > GPS_STATUS_LIMIT) ? _ahrs.get_gps().status()-GPS_STATUS_LIMIT : 0)<<GPS_ADVSTATUS_OFFSET;
     // Altitude MSL in dm
     const Location &loc = _ahrs.get_gps().location();
     gps_status |= prep_number(roundf(loc.alt * 0.1f),2,2)<<GPS_ALTMSL_OFFSET; 
@@ -680,9 +673,9 @@ uint32_t AP_Frsky_Telem::calc_ap_status(void)
     // control/flight mode number (limit to 31 (0x1F) since the value is stored on 5 bits)
     ap_status = (uint8_t)((_ap.control_mode+1) & AP_CONTROL_MODE_LIMIT);
     // simple/super simple modes flags
-    ap_status |= (uint8_t)(*_ap.valuep & AP_SSIMPLE_FLAGS)<<AP_SSIMPLE_OFFSET;
+    ap_status |= (uint8_t)((*_ap.valuep) & AP_SSIMPLE_FLAGS)<<AP_SSIMPLE_OFFSET;
     // is_flying flag
-    ap_status |= (uint8_t)((*_ap.valuep & AP_ISFLYING_FLAG) ^ AP_ISFLYING_FLAG);
+    ap_status |= (uint8_t)(((*_ap.valuep) & AP_LANDCOMPLETE_FLAG) ^ AP_LANDCOMPLETE_FLAG);
     // armed flag
     ap_status |= (uint8_t)(AP_Notify::flags.armed)<<AP_ARMED_OFFSET;
     // battery failsafe flag
@@ -700,6 +693,7 @@ uint32_t AP_Frsky_Telem::calc_home(void)
 {
     uint32_t home = 0;
     Location loc;
+    float _relative_home_altitude = 0;
     if (_ahrs.get_position(loc)) {            
         // check home_loc is valid
         const Location &home_loc = _ahrs.get_home();
@@ -715,9 +709,8 @@ uint32_t AP_Frsky_Telem::calc_home(void)
             // loc.alt has home altitude added, remove it
             _relative_home_altitude -= _ahrs.get_home().alt;
         }
-    } else {
-        _relative_home_altitude = 0;
     }
+    // altitude above home in decimeters
     home |= prep_number(roundf(_relative_home_altitude * 0.1f), 3, 2)<<HOME_ALT_OFFSET;
     return home;
 }
@@ -734,7 +727,7 @@ uint32_t AP_Frsky_Telem::calc_velandyaw(void)
     // if we can't get velocity then we use zero for vertical velocity
     _ahrs.get_velocity_NED(velNED);
     // vertical velocity in dm/s
-    velandyaw = prep_number(roundf(velNED.z * 10), 2, 1);
+    velandyaw = prep_number(roundf(-velNED.z * 10), 2, 1);
     // horizontal velocity in dm/s (use airspeed if available and enabled - even if not used - otherwise use groundspeed)
     const AP_Airspeed *aspeed = _ahrs.get_airspeed();
     if (aspeed && aspeed->enabled()) {        
@@ -760,7 +753,7 @@ uint32_t AP_Frsky_Telem::calc_attiandrng(void)
     // pitch from [-9000;9000] centidegrees to unsigned .2 degree increments [0;900] (just in case, limit to 1023 (0x3FF) since the value is stored on 10 bits)
     attiandrng |= ((uint16_t)roundf((_ahrs.pitch_sensor + 9000) * 0.05f) & ATTIANDRNG_PITCH_LIMIT)<<ATTIANDRNG_PITCH_OFFSET;
     // rangefinder measurement in cm
-    attiandrng |= prep_number(_rng.distance_cm(), 3, 1)<<ATTIANDRNG_RNGFND_OFFSET;
+    attiandrng |= prep_number(_rng.distance_cm_orient(ROTATION_PITCH_270), 3, 1)<<ATTIANDRNG_RNGFND_OFFSET;
     return attiandrng;
 }
 
@@ -836,15 +829,13 @@ uint16_t AP_Frsky_Telem::prep_number(int32_t number, uint8_t digits, uint8_t pow
 void AP_Frsky_Telem::calc_nav_alt(void)
 {
     Location loc;
-    float current_height; // in centimeters above home
+    float current_height = 0; // in centimeters above home
     if (_ahrs.get_position(loc)) {
         current_height = loc.alt*0.01f;
         if (!loc.flags.relative_alt) {
             // loc.alt has home altitude added, remove it
             current_height -= _ahrs.get_home().alt*0.01f;
         }
-    } else {
-        current_height = 0;
     }
     
     _gps.alt_nav_meters = (int16_t)current_height;
@@ -901,14 +892,5 @@ void AP_Frsky_Telem::calc_gps_position(void)
         _gps.alt_gps_cm = 0;
         _gps.speed_in_meter = 0;
         _gps.speed_in_centimeter = 0;
-    }
-}
-
-void AP_Frsky_Telem::set_is_flying(bool is_flying)
-{
-    if (is_flying) {
-        _ap.value |= AP_ISFLYING_FLAG;
-    } else {
-        _ap.value &= ~AP_ISFLYING_FLAG;
     }
 }

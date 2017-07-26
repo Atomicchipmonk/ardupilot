@@ -136,13 +136,13 @@ void Plane::geofence_load(void)
     geofence_state->boundary_uptodate = true;
     geofence_state->fence_triggered = false;
 
-    gcs_send_text(MAV_SEVERITY_INFO,"Geofence loaded");
-    gcs_send_message(MSG_FENCE_STATUS);
+    gcs().send_text(MAV_SEVERITY_INFO,"Geofence loaded");
+    gcs().send_message(MSG_FENCE_STATUS);
     return;
 
 failed:
     g.fence_action.set(FENCE_ACTION_NONE);
-    gcs_send_text(MAV_SEVERITY_WARNING,"Geofence setup error");
+    gcs().send_text(MAV_SEVERITY_WARNING,"Geofence setup error");
 }
 
 /*
@@ -310,7 +310,7 @@ void Plane::geofence_check(bool altitude_check_only)
     struct Location loc;
 
     // Never trigger a fence breach in the final stage of landing
-    if (flight_stage == AP_SpdHgtControl::FLIGHT_LAND_FINAL || flight_stage == AP_SpdHgtControl::FLIGHT_LAND_PREFLARE) {
+    if (landing.is_expecting_impact()) {
         return;
     }
 
@@ -334,12 +334,12 @@ void Plane::geofence_check(bool altitude_check_only)
         if (geofence_state->fence_triggered && !altitude_check_only) {
             // we have moved back inside the fence
             geofence_state->fence_triggered = false;
-            gcs_send_text(MAV_SEVERITY_INFO,"Geofence OK");
+            gcs().send_text(MAV_SEVERITY_INFO,"Geofence OK");
  #if FENCE_TRIGGERED_PIN > 0
             hal.gpio->pinMode(FENCE_TRIGGERED_PIN, HAL_GPIO_OUTPUT);
             hal.gpio->write(FENCE_TRIGGERED_PIN, 0);
  #endif
-            gcs_send_message(MSG_FENCE_STATUS);
+            gcs().send_message(MSG_FENCE_STATUS);
         }
         // we're inside, all is good with the world
         return;
@@ -364,8 +364,8 @@ void Plane::geofence_check(bool altitude_check_only)
     hal.gpio->write(FENCE_TRIGGERED_PIN, 1);
  #endif
 
-    gcs_send_text(MAV_SEVERITY_NOTICE,"Geofence triggered");
-    gcs_send_message(MSG_FENCE_STATUS);
+    gcs().send_text(MAV_SEVERITY_NOTICE,"Geofence triggered");
+    gcs().send_message(MSG_FENCE_STATUS);
 
     // see what action the user wants
     switch (g.fence_action) {
@@ -485,7 +485,8 @@ bool Plane::geofence_set_floor_enabled(bool floor_enable) {
     return false;
 }
 
-bool geofence_breached(void) {
+bool Plane::geofence_breached(void)
+{
     return false;
 }
 

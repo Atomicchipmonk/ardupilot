@@ -53,6 +53,7 @@ void DataFlash_Backend::periodic_tasks()
 void DataFlash_Backend::start_new_log_reset_variables()
 {
     _startup_messagewriter->reset();
+    _front.backend_starting_new_log(this);
 }
 
 void DataFlash_Backend::internal_error() {
@@ -147,7 +148,7 @@ bool DataFlash_Backend::Log_Write(const uint8_t msg_type, va_list arg_list, bool
     // stack-allocate a buffer so we can WriteBlock(); this could be
     // 255 bytes!  If we were willing to lose the WriteBlock
     // abstraction we could do WriteBytes() here instead?
-    const char *fmt  = NULL;
+    const char *fmt  = nullptr;
     uint8_t msg_len;
     DataFlash_Class::log_write_fmt *f;
     for (f = _front.log_write_fmts; f; f=f->next) {
@@ -157,7 +158,7 @@ bool DataFlash_Backend::Log_Write(const uint8_t msg_type, va_list arg_list, bool
             break;
         }
     }
-    if (fmt == NULL) {
+    if (fmt == nullptr) {
         // this is a bug.
         internal_error();
         return false;
@@ -257,4 +258,47 @@ bool DataFlash_Backend::Log_Write(const uint8_t msg_type, va_list arg_list, bool
     }
 
     return WritePrioritisedBlock(buffer, msg_len, is_critical);
+}
+
+bool DataFlash_Backend::StartNewLogOK() const
+{
+    if (logging_started()) {
+        return false;
+    }
+    if (_front._log_bitmask == 0) {
+        return false;
+    }
+    if (_front.in_log_download()) {
+        return false;
+    }
+    return true;
+}
+
+bool DataFlash_Backend::WritePrioritisedBlock(const void *pBuffer, uint16_t size, bool is_critical)
+{
+    if (!ShouldLog()) {
+        return false;
+    }
+    if (StartNewLogOK()) {
+        start_new_log();
+    }
+    if (!WritesOK()) {
+        return false;
+    }
+    return _WritePrioritisedBlock(pBuffer, size, is_critical);
+}
+
+bool DataFlash_Backend::ShouldLog() const
+{
+    if (!_front.WritesEnabled()) {
+        return false;
+    }
+    if (!_front.vehicle_is_armed() && !_front.log_while_disarmed()) {
+        return false;
+    }
+    if (!_initialised) {
+        return false;
+    }
+
+    return true;
 }

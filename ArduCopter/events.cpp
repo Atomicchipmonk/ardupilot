@@ -7,7 +7,7 @@
 void Copter::failsafe_radio_on_event()
 {
     // if motors are not armed there is nothing to do
-    if( !motors.armed() ) {
+    if( !motors->armed() ) {
         return;
     }
 
@@ -50,7 +50,7 @@ void Copter::failsafe_battery_event(void)
     }
 
     // failsafe check
-    if (g.failsafe_battery_enabled != FS_BATT_DISABLED && motors.armed()) {
+    if (g.failsafe_battery_enabled != FS_BATT_DISABLED && motors->armed()) {
         if (should_disarm_on_failsafe()) {
             init_disarm_motors();
         } else {
@@ -66,7 +66,7 @@ void Copter::failsafe_battery_event(void)
     set_failsafe_battery(true);
 
     // warn the ground station and log to dataflash
-    gcs_send_text(MAV_SEVERITY_WARNING,"Low battery");
+    gcs().send_text(MAV_SEVERITY_WARNING,"Low battery");
     Log_Write_Error(ERROR_SUBSYSTEM_FAILSAFE_BATT, ERROR_CODE_FAILSAFE_OCCURRED);
 
 }
@@ -97,7 +97,7 @@ void Copter::failsafe_gcs_check()
     }
 
     // do nothing if gcs failsafe already triggered or motors disarmed
-    if (failsafe.gcs || !motors.armed()) {
+    if (failsafe.gcs || !motors->armed()) {
         return;
     }
 
@@ -172,7 +172,7 @@ void Copter::failsafe_terrain_set_status(bool data_ok)
 void Copter::failsafe_terrain_on_event()
 {
     failsafe.terrain = true;
-    gcs_send_text(MAV_SEVERITY_CRITICAL,"Failsafe: Terrain data missing");
+    gcs().send_text(MAV_SEVERITY_CRITICAL,"Failsafe: Terrain data missing");
     Log_Write_Error(ERROR_SUBSYSTEM_FAILSAFE_TERRAIN, ERROR_CODE_FAILSAFE_OCCURRED);
 
     if (should_disarm_on_failsafe()) {

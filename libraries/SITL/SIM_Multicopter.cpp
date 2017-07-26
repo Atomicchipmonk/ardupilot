@@ -25,12 +25,14 @@ using namespace SITL;
 
 MultiCopter::MultiCopter(const char *home_str, const char *frame_str) :
     Aircraft(home_str, frame_str),
-    frame(NULL)
+    frame(nullptr)
 {
     mass = 1.5f;
 
+    gripper.set_aircraft(this);
+
     frame = Frame::find_frame(frame_str);
-    if (frame == NULL) {
+    if (frame == nullptr) {
         printf("Frame '%s' not found", frame_str);
         exit(1);
     }
@@ -67,15 +69,20 @@ void MultiCopter::update(const struct sitl_input &input)
 
     // update lat/lon/altitude
     update_position();
+    time_advance();
 
     // update magnetic field
     update_mag_field_bf();
 
     // update sprayer
     sprayer.update(input);
+
+    // update gripper
+    gripper.update(input);
+    gripper_epm.update(input);
 }
 
 float MultiCopter::gross_mass() const
 {
-    return Aircraft::gross_mass() + sprayer.payload_mass();
+    return Aircraft::gross_mass() + sprayer.payload_mass() + gripper.payload_mass();
 }

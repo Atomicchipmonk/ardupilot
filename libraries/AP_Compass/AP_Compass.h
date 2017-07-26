@@ -12,19 +12,6 @@
 #include "CompassCalibrator.h"
 #include "AP_Compass_Backend.h"
 
-// compass product id
-#define AP_COMPASS_TYPE_UNKNOWN         0x00
-#define AP_COMPASS_TYPE_HIL             0x01
-#define AP_COMPASS_TYPE_HMC5843         0x02
-#define AP_COMPASS_TYPE_HMC5883L        0x03
-#define AP_COMPASS_TYPE_PX4             0x04
-#define AP_COMPASS_TYPE_VRBRAIN         0x05
-#define AP_COMPASS_TYPE_AK8963_MPU9250  0x06
-#define AP_COMPASS_TYPE_AK8963_I2C      0x07
-#define AP_COMPASS_TYPE_LSM303D         0x08
-#define AP_COMPASS_TYPE_LSM9DS1         0x09
-#define AP_COMPASS_TYPE_BMM150          0x0A
-
 // motor compensation types (for use with motor_comp_enabled)
 #define AP_COMPASS_MOT_COMP_DISABLED    0x00
 #define AP_COMPASS_MOT_COMP_THROTTLE    0x01
@@ -42,16 +29,18 @@
 # define MAG_BOARD_ORIENTATION ROTATION_NONE
 #endif
 
+// define default compass calibration fitness and consistency checks
+#define AP_COMPASS_CALIBRATION_FITNESS_DEFAULT 16.0f
+#define AP_COMPASS_MAX_XYZ_ANG_DIFF radians(90.0f)
+#define AP_COMPASS_MAX_XY_ANG_DIFF radians(60.0f)
+#define AP_COMPASS_MAX_XY_LENGTH_DIFF 200.0f
+
 /**
    maximum number of compass instances available on this platform. If more
    than 1 then redundant sensors may be available
  */
 #define COMPASS_MAX_INSTANCES 3
 #define COMPASS_MAX_BACKEND   3
-
-#define AP_COMPASS_MAX_XYZ_ANG_DIFF radians(50.0f)
-#define AP_COMPASS_MAX_XY_ANG_DIFF radians(30.0f)
-#define AP_COMPASS_MAX_XY_LENGTH_DIFF 100.0f
 
 class Compass
 {
@@ -133,7 +122,7 @@ public:
     /*
       handle an incoming MAG_CAL command
     */
-    uint8_t handle_mag_cal_command(const mavlink_command_long_t &packet);
+    MAV_RESULT handle_mag_cal_command(const mavlink_command_long_t &packet);
 
     void send_mag_cal_progress(mavlink_channel_t chan);
     void send_mag_cal_report(mavlink_channel_t chan);
@@ -272,6 +261,9 @@ public:
     uint32_t last_update_usec(void) const { return _state[get_primary()].last_update_usec; }
     uint32_t last_update_usec(uint8_t i) const { return _state[i].last_update_usec; }
 
+    uint32_t last_update_ms(void) const { return _state[get_primary()].last_update_ms; }
+    uint32_t last_update_ms(uint8_t i) const { return _state[i].last_update_ms; }
+
     static const struct AP_Param::GroupInfo var_info[];
 
     // HIL variables
@@ -292,7 +284,12 @@ public:
     enum LearnType get_learn_type(void) const {
         return (enum LearnType)_learn.get();
     }
-    
+
+    // return maximum allowed compass offsets
+    uint16_t get_offsets_max(void) const {
+        return (uint16_t)_offset_max.get();
+    }
+
 private:
     /// Register a new compas driver, allocating an instance number
     ///
@@ -323,6 +320,26 @@ private:
     bool _cal_complete_requires_reboot;
     bool _cal_has_run;
 
+    // enum of drivers for COMPASS_TYPEMASK
+    enum DriverType {
+        DRIVER_HMC5883  =0,
+        DRIVER_LSM303D  =1,
+        DRIVER_AK8963   =2,
+        DRIVER_BMM150   =3,
+        DRIVER_LSM9DS1  =4,
+        DRIVER_LIS3MDL  =5,
+        DRIVER_AK09916  =6,
+        DRIVER_IST8310  =7,
+        DRIVER_ICM20948 =8,
+        DRIVER_MMC3416  =9,
+        DRIVER_QFLIGHT  =10,
+        DRIVER_UAVCAN   =11,
+        DRIVER_QMC5883  =12,
+        DRIVER_SITL     =13,
+    };
+
+    bool _driver_enabled(enum DriverType driver_type);
+    
     // backend objects
     AP_Compass_Backend *_backends[COMPASS_MAX_BACKEND];
     uint8_t     _backend_count;
@@ -388,7 +405,12 @@ private:
         // when we last got data
         uint32_t    last_update_ms;
         uint32_t    last_update_usec;
+
+        // board specific orientation
+        enum Rotation rotation;
     } _state[COMPASS_MAX_INSTANCES];
+
+    AP_Int16 _offset_max;
 
     CompassCalibrator _calibrator[COMPASS_MAX_INSTANCES];
 
@@ -396,4 +418,7 @@ private:
     bool _hil_mode:1;
 
     AP_Float _calibration_threshold;
+
+    // mask of driver types to not load. Bit positions match DEVTYPE_ in backend
+    AP_Int32 _driver_type_mask;
 };

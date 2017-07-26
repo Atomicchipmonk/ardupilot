@@ -3,9 +3,9 @@
 # This helps when doing large merges
 # Andrew Tridgell, November 2011
 
-set -ex
-
 . ~/.profile
+
+set -ex
 
 # CXX and CC are exported by default by travis
 c_compiler=${CC:-gcc}
@@ -18,10 +18,6 @@ export GIT_VERSION="ci_test"
 export NUTTX_GIT_VERSION="ci_test"
 export PX4_GIT_VERSION="ci_test"
 export CCACHE_SLOPPINESS="include_file_ctime,include_file_mtime"
-
-if [[ "$cxx_compiler" == "clang++" ]]; then
-  export CCACHE_CPP2="true"
-fi
 
 # If CI_BUILD_TARGET is not set, build 3 different ones
 if [ -z "$CI_BUILD_TARGET" ]; then
@@ -47,6 +43,8 @@ if [ "$CI_BUILD_TARGET" = "sitltest" ]; then
     Tools/autotest/autotest.py -j2 build.ArduCopter fly.ArduCopter
     echo "Running SITL QuadPlane test"
     Tools/autotest/autotest.py -j2 build.ArduPlane fly.QuadPlane
+    echo "Running SITL Rover test"
+    Tools/autotest/autotest.py -j2 build.APMrover2 drive.APMrover2
     exit 0
 fi
 
@@ -66,7 +64,7 @@ for t in $CI_BUILD_TARGET; do
     # only do make-based builds for GCC when target is PX4 or when launched by a scheduled job
     if [[ "$cxx_compiler" != "clang++" && ( $t == "px4"* || -n ${CI_CRON_JOB+1} ) ]]; then
         echo "Starting make based build for target ${t}..."
-        for v in "ArduPlane" "ArduCopter" "APMrover2" "AntennaTracker"; do
+        for v in "ArduPlane" "ArduCopter" "APMrover2" "ArduSub" "AntennaTracker"; do
             echo "Building $v for ${t}..."
 
             pushd $v

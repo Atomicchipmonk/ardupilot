@@ -45,7 +45,7 @@ Helicopter::Helicopter(const char *home_str, const char *frame_str) :
     } else {
         frame_type = HELI_FRAME_CONVENTIONAL;
     }
-    gas_heli = (strstr(frame_str, "-gas") != NULL);
+    gas_heli = (strstr(frame_str, "-gas") != nullptr);
 
     ground_behavior = GROUND_BEHAVIOR_NO_MOVEMENT;
 }
@@ -164,6 +164,7 @@ void Helicopter::update(const struct sitl_input &input)
     
     // update lat/lon/altitude
     update_position();
+    time_advance();
 
     // update magnetic field
     update_mag_field_bf();

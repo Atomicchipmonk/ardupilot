@@ -1,5 +1,5 @@
 # Fly ArduPlane in SITL
-
+from __future__ import print_function
 import math
 import os
 import shutil
@@ -19,12 +19,14 @@ WIND = "0,180,0.2"  # speed,direction,variance
 
 homeloc = None
 
+def wait_ready_to_arm(mavproxy):
+    # wait for EKF and GPS checks to pass
+    mavproxy.expect('IMU0 is using GPS')
 
 def takeoff(mavproxy, mav):
     """Takeoff get to 30m altitude."""
 
-    # wait for EKF and GPS checks to pass
-    wait_seconds(mav, 30)
+    wait_ready_to_arm(mavproxy)
 
     mavproxy.send('arm throttle\n')
     mavproxy.expect('ARMED')
@@ -433,6 +435,7 @@ def fly_mission(mavproxy, mav, filename, height_accuracy=-1, target_altitude=Non
         return False
     if not wait_groundspeed(mav, 0, 0.5, timeout=60):
         return False
+    mavproxy.expect("Auto disarmed")
     print("Mission OK")
     return True
 
@@ -563,9 +566,9 @@ def fly_ArduPlane(binary, viewerip=None, use_map=False, valgrind=False, gdb=Fals
     util.pexpect_close(mavproxy)
     util.pexpect_close(sitl)
 
-    valgrind_log = sitl.valgrind_log_filepath()
+    valgrind_log = util.valgrind_log_filepath(binary=binary, model='plane-elevrev')
     if os.path.exists(valgrind_log):
-        os.chmod(valgrind_log, 0644)
+        os.chmod(valgrind_log, 0o644)
         shutil.copy(valgrind_log, util.reltopdir("../buildlogs/ArduPlane-valgrind.log"))
 
     if failed:

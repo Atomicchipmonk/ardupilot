@@ -107,7 +107,7 @@ const AP_Param::GroupInfo AP_ADSB::var_info[] = {
     // @Description: Transceiver RF selection for Rx enable and/or Tx enable.
     // @Values: 0:Disabled,1:Rx-Only,2:Tx-Only,3:Rx and Tx Enabled
     // @User: Advanced
-    AP_GROUPINFO("RF_SELECT",   9, AP_ADSB, out_state.cfg.rfSelect, UAVIONIX_ADSB_OUT_RF_SELECT_RX_ENABLED | UAVIONIX_ADSB_OUT_RF_SELECT_TX_ENABLED),
+    AP_GROUPINFO("RF_SELECT",   9, AP_ADSB, out_state.cfg.rfSelect, UAVIONIX_ADSB_OUT_RF_SELECT_RX_ENABLED),
 
 
 
@@ -222,7 +222,7 @@ void AP_ADSB::update(void)
         }
         out_state.cfg.ICAO_id_param_prev = out_state.cfg.ICAO_id_param;
         set_callsign("PING", true);
-        GCS_MAVLINK::send_statustext_all(MAV_SEVERITY_INFO, "ADSB: Using ICAO_id %d and Callsign %s", out_state.cfg.ICAO_id, out_state.cfg.callsign);
+        gcs().send_text(MAV_SEVERITY_INFO, "ADSB: Using ICAO_id %d and Callsign %s", out_state.cfg.ICAO_id, out_state.cfg.callsign);
         out_state.last_config_ms = 0; // send now
     }
 
@@ -232,7 +232,7 @@ void AP_ADSB::update(void)
         // haven't gotten a heartbeat health status packet in a while, assume hardware failure
         // TODO: reset out_state.chan
         out_state.chan = -1;
-        GCS_MAVLINK::send_statustext_all(MAV_SEVERITY_ERROR, "ADSB: Transceiver heartbeat timed out");
+        gcs().send_text(MAV_SEVERITY_ERROR, "ADSB: Transceiver heartbeat timed out");
     } else if (out_state.chan < MAVLINK_COMM_NUM_BUFFERS) {
         mavlink_channel_t chan = (mavlink_channel_t)(MAVLINK_COMM_0 + out_state.chan);
         if (now - out_state.last_config_ms >= 5000 && HAVE_PAYLOAD_SPACE(chan, UAVIONIX_ADSB_OUT_CFG)) {
@@ -462,14 +462,12 @@ void AP_ADSB::send_adsb_vehicle(const mavlink_channel_t chan)
 
 void AP_ADSB::send_dynamic_out(const mavlink_channel_t chan)
 {
-    // --------------
-    // Knowns
     AP_GPS gps = _ahrs.get_gps();
     Vector3f gps_velocity = gps.velocity();
 
     int32_t latitude = _my_loc.lat;
     int32_t longitude = _my_loc.lng;
-    int32_t altGNSS = _my_loc.alt*0.1f; // convert cm to mm
+    int32_t altGNSS = _my_loc.alt * 10; // convert cm to mm
     int16_t velVert = gps_velocity.z * 1E2; // convert m/s to cm/s
     int16_t nsVog = gps_velocity.x * 1E2; // convert m/s to cm/s
     int16_t ewVog = gps_velocity.y * 1E2; // convert m/s to cm/s
@@ -504,21 +502,16 @@ void AP_ADSB::send_dynamic_out(const mavlink_channel_t chan)
         state |= UAVIONIX_ADSB_OUT_DYNAMIC_STATE_ON_GROUND;
     }
 
-
-
-    // --------------
-    // Not Sure
-    uint32_t utcTime = UINT_MAX; //    uint32_t utcTime,
     // TODO: confirm this sets utcTime correctly
     const uint64_t gps_time = gps.time_epoch_usec();
-    utcTime = gps_time / 1000000ULL;
+    const uint32_t utcTime = gps_time / 1000000ULL;
 
-
-
-    // --------------
-    // Unknowns
-    // TODO: implement http://www.srh.noaa.gov/images/epz/wxcalc/pressureAltitude.pdf
-    int32_t altPres = INT_MAX; //_ahrs.get_baro().get_altitude() relative to home, not MSL
+    AP_Baro baro = _ahrs.get_baro();
+    int32_t altPres = INT_MAX;
+    if (baro.healthy()) {
+        // Altitude difference between 101325 (Pascals) and current pressure. Result in millimeters
+        altPres = baro.get_altitude_difference(101325, baro.get_pressure()) * 1E3; // convert m to mm;
+    }
 
 
 
@@ -567,7 +560,7 @@ void AP_ADSB::handle_transceiver_report(const mavlink_channel_t chan, const mavl
     mavlink_msg_uavionix_adsb_transceiver_health_report_decode(msg, &packet);
 
     if (out_state.chan != chan) {
-        GCS_MAVLINK::send_statustext_all(MAV_SEVERITY_DEBUG, "ADSB: Found transceiver on channel %d", chan);
+        gcs().send_text(MAV_SEVERITY_DEBUG, "ADSB: Found transceiver on channel %d", chan);
     }
 
     out_state.chan_last_ms = AP_HAL::millis();
@@ -639,15 +632,8 @@ void AP_ADSB::set_callsign(const char* str, const bool append_icao)
     } // for i
 
     if (append_icao) {
-        char str_icao[5];
-        sprintf(str_icao, "%04X", out_state.cfg.ICAO_id % 0x10000);
-        out_state.cfg.callsign[4] = str_icao[0];
-        out_state.cfg.callsign[5] = str_icao[1];
-        out_state.cfg.callsign[6] = str_icao[2];
-        out_state.cfg.callsign[7] = str_icao[3];
+        snprintf(&out_state.cfg.callsign[4], 5, "%04X", out_state.cfg.ICAO_id % 0x10000);
     }
-
-    out_state.cfg.callsign[sizeof(out_state.cfg.callsign)-1] = 0; // always null terminate just to be sure
 }
 
 

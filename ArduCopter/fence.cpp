@@ -18,7 +18,7 @@ void Copter::fence_check()
     new_breaches = fence.check_fence(current_loc.alt/100.0f);
 
     // return immediately if motors are not armed
-    if(!motors.armed()) {
+    if(!motors->armed()) {
         return;
     }
 
@@ -65,7 +65,7 @@ void Copter::fence_send_mavlink_status(mavlink_channel_t chan)
         if ((breaches & AC_FENCE_TYPE_ALT_MAX) != 0) {
             mavlink_breach_type = FENCE_BREACH_MAXALT;
         }
-        if ((breaches & AC_FENCE_TYPE_CIRCLE) != 0) {
+        if ((breaches & (AC_FENCE_TYPE_CIRCLE | AC_FENCE_TYPE_POLYGON)) != 0) {
             mavlink_breach_type = FENCE_BREACH_BOUNDARY;
         }
 

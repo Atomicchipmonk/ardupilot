@@ -1,7 +1,6 @@
 #pragma once
 
 #include <atomic>
-#include <stdbool.h>
 #include <stdint.h>
 
 /*
@@ -103,6 +102,12 @@ public:
     }
     ~ObjectBuffer(void) {
         delete buffer;
+    }
+
+    // Discards the buffer content, emptying it.
+    void clear(void)
+    {
+        buffer->clear();
     }
 
     // return number of objects available to be read
@@ -230,6 +235,12 @@ public:
         return true;
     }
 
+    // Discards the buffer content, emptying it.
+    void clear(void)
+    {
+        head = count = 0;
+    }
+
     /*
       pop earliest object off the queue
      */
@@ -278,7 +289,7 @@ public:
     }
 
     // allow array indexing, based on current head. Returns a pointer
-    // to the object or NULL
+    // to the object or nullptr
     T * operator[](uint16_t i) {
         if (i >= count) {
             return nullptr;

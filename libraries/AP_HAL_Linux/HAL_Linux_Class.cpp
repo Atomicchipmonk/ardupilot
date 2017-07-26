@@ -1,6 +1,7 @@
 #include "HAL_Linux_Class.h"
 
 #include <assert.h>
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
@@ -93,7 +94,8 @@ static AnalogIn_ADS1115 analogIn;
 static AnalogIn_Raspilot analogIn;
 #elif CONFIG_HAL_BOARD_SUBTYPE == HAL_BOARD_SUBTYPE_LINUX_PXF || \
       CONFIG_HAL_BOARD_SUBTYPE == HAL_BOARD_SUBTYPE_LINUX_ERLEBOARD || \
-      CONFIG_HAL_BOARD_SUBTYPE == HAL_BOARD_SUBTYPE_LINUX_BBBMINI  || \
+      CONFIG_HAL_BOARD_SUBTYPE == HAL_BOARD_SUBTYPE_LINUX_BBBMINI || \
+      CONFIG_HAL_BOARD_SUBTYPE == HAL_BOARD_SUBTYPE_LINUX_BLUE || \
       CONFIG_HAL_BOARD_SUBTYPE == HAL_BOARD_SUBTYPE_LINUX_MINLURE
 static AnalogIn_IIO analogIn;
 #elif CONFIG_HAL_BOARD_SUBTYPE == HAL_BOARD_SUBTYPE_LINUX_NAVIO2
@@ -105,9 +107,12 @@ static Empty::AnalogIn analogIn;
 static Storage storageDriver;
 
 /*
-  use the BBB gpio driver on ERLE, PXF and BBBMINI
+  use the BBB gpio driver on ERLE, PXF, BBBMINI and BLUE
  */
-#if CONFIG_HAL_BOARD_SUBTYPE == HAL_BOARD_SUBTYPE_LINUX_PXF || CONFIG_HAL_BOARD_SUBTYPE == HAL_BOARD_SUBTYPE_LINUX_ERLEBOARD || CONFIG_HAL_BOARD_SUBTYPE == HAL_BOARD_SUBTYPE_LINUX_BBBMINI
+#if CONFIG_HAL_BOARD_SUBTYPE == HAL_BOARD_SUBTYPE_LINUX_PXF || \
+    CONFIG_HAL_BOARD_SUBTYPE == HAL_BOARD_SUBTYPE_LINUX_ERLEBOARD || \
+    CONFIG_HAL_BOARD_SUBTYPE == HAL_BOARD_SUBTYPE_LINUX_BBBMINI || \
+    CONFIG_HAL_BOARD_SUBTYPE == HAL_BOARD_SUBTYPE_LINUX_BLUE
 static GPIO_BBB gpioDriver;
 /*
   use the RPI gpio driver on Navio
@@ -135,7 +140,8 @@ static Empty::GPIO gpioDriver;
  */
 #if CONFIG_HAL_BOARD_SUBTYPE == HAL_BOARD_SUBTYPE_LINUX_PXF || CONFIG_HAL_BOARD_SUBTYPE == HAL_BOARD_SUBTYPE_LINUX_ERLEBOARD
 static RCInput_PRU rcinDriver;
-#elif CONFIG_HAL_BOARD_SUBTYPE == HAL_BOARD_SUBTYPE_LINUX_BBBMINI
+#elif CONFIG_HAL_BOARD_SUBTYPE == HAL_BOARD_SUBTYPE_LINUX_BBBMINI || \
+      CONFIG_HAL_BOARD_SUBTYPE == HAL_BOARD_SUBTYPE_LINUX_BLUE
 static RCInput_AioPRU rcinDriver;
 #elif CONFIG_HAL_BOARD_SUBTYPE == HAL_BOARD_SUBTYPE_LINUX_NAVIO || \
       CONFIG_HAL_BOARD_SUBTYPE == HAL_BOARD_SUBTYPE_LINUX_ERLEBRAIN2 || \
@@ -169,7 +175,8 @@ static RCInput rcinDriver;
  */
 #if CONFIG_HAL_BOARD_SUBTYPE == HAL_BOARD_SUBTYPE_LINUX_PXF || CONFIG_HAL_BOARD_SUBTYPE == HAL_BOARD_SUBTYPE_LINUX_ERLEBOARD
 static RCOutput_PRU rcoutDriver;
-#elif CONFIG_HAL_BOARD_SUBTYPE == HAL_BOARD_SUBTYPE_LINUX_BBBMINI
+#elif CONFIG_HAL_BOARD_SUBTYPE == HAL_BOARD_SUBTYPE_LINUX_BBBMINI || \
+      CONFIG_HAL_BOARD_SUBTYPE == HAL_BOARD_SUBTYPE_LINUX_BLUE
 static RCOutput_AioPRU rcoutDriver;
 /*
   use the PCA9685 based RCOutput driver on Navio and Erle-Brain 2
@@ -218,8 +225,7 @@ static Empty::RCOutput rcoutDriver;
 static Scheduler schedulerInstance;
 
 #if CONFIG_HAL_BOARD_SUBTYPE == HAL_BOARD_SUBTYPE_LINUX_BEBOP ||\
-    CONFIG_HAL_BOARD_SUBTYPE == HAL_BOARD_SUBTYPE_LINUX_MINLURE ||\
-    CONFIG_HAL_BOARD_SUBTYPE == HAL_BOARD_SUBTYPE_LINUX_BBBMINI
+    CONFIG_HAL_BOARD_SUBTYPE == HAL_BOARD_SUBTYPE_LINUX_MINLURE
 static OpticalFlow_Onboard opticalFlow;
 #else
 static Empty::OpticalFlow opticalFlow;
@@ -243,7 +249,8 @@ HAL_Linux::HAL_Linux() :
         &rcoutDriver,
         &schedulerInstance,
         &utilInstance,
-        &opticalFlow)
+        &opticalFlow,
+        nullptr)
 {}
 
 void _usage(void)
@@ -348,6 +355,8 @@ void HAL_Linux::run(int argc, char* const argv[], Callbacks* callbacks) const
         }
     }
 
+    setup_signal_handlers();
+
     scheduler->init();
     gpio->init();
     rcout->init();
@@ -372,12 +381,34 @@ void HAL_Linux::run(int argc, char* const argv[], Callbacks* callbacks) const
     callbacks->setup();
     AP_Module::call_hook_setup_complete();
 
-    for (;;) {
+    while (!_should_exit) {
         callbacks->loop();
     }
+
+    rcin->teardown();
+    I2CDeviceManager::from(i2c_mgr)->teardown();
+    SPIDeviceManager::from(spi)->teardown();
+    Scheduler::from(scheduler)->teardown();
 }
 
-const AP_HAL::HAL& AP_HAL::get_HAL() {
-    static const HAL_Linux hal;
-    return hal;
+void HAL_Linux::setup_signal_handlers() const
+{
+    struct sigaction sa = { };
+
+    sa.sa_flags = SA_NOCLDSTOP;
+    sa.sa_handler = HAL_Linux::exit_signal_handler;
+    sigaction(SIGTERM, &sa, NULL);
+    sigaction(SIGINT, &sa, NULL);
+}
+
+static HAL_Linux halInstance;
+
+void HAL_Linux::exit_signal_handler(int signum)
+{
+    halInstance._should_exit = true;
+}
+
+const AP_HAL::HAL &AP_HAL::get_HAL()
+{
+    return halInstance;
 }

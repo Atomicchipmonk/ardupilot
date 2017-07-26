@@ -55,14 +55,14 @@ uint64_t AP_HAL::Util::get_system_clock_ms() const
 {
 #if defined(__APPLE__) && defined(__MACH__)
     struct timeval ts;
-    gettimeofday(&ts, NULL);
+    gettimeofday(&ts, nullptr);
     return ((long long)((ts.tv_sec * 1000) + (ts.tv_usec / 1000)));
 #else
     struct timespec ts;
     clock_gettime(CLOCK_REALTIME, &ts);
     const uint64_t seconds = ts.tv_sec;
     const uint64_t nanoseconds = ts.tv_nsec;
-    return (seconds * 1000UL + nanoseconds/1000000UL);
+    return (seconds * 1000ULL + nanoseconds/1000000ULL);
 #endif
 }
 

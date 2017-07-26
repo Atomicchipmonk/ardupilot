@@ -89,7 +89,21 @@ public:
         _buses.reserve(3);
     }
 
+    /* AP_HAL::SPIDeviceManager implementation */
     AP_HAL::OwnPtr<AP_HAL::SPIDevice> get_device(const char *name);
+
+    /*
+     * Stop all SPI threads and block until they are finalized. This doesn't
+     * free memory because they can still be used by devices, however device
+     * drivers won't receive any new event
+     */
+    void teardown();
+
+    /* See AP_HAL::SPIDeviceManager::get_count() */
+    uint8_t get_count();
+
+    /* See AP_HAL::SPIDeviceManager::get_device_name() */
+    const char *get_device_name(uint8_t idx);
 
 protected:
     void _unregister(SPIBus &b);

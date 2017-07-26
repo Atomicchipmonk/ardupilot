@@ -25,18 +25,24 @@ extern const AP_HAL::HAL& hal;
 // initialisation
 void DataFlash_MAVLink::Init()
 {
+    semaphore = hal.util->new_semaphore();
+    if (semaphore == nullptr) {
+        AP_HAL::panic("Failed to create DataFlash_MAVLink semaphore");
+        return;
+    }
+
     DataFlash_Backend::Init();
 
-    _blocks = NULL;
+    _blocks = nullptr;
     while (_blockcount >= 8) { // 8 is a *magic* number
         _blocks = (struct dm_block *) malloc(_blockcount * sizeof(_blocks[0]));
-        if (_blocks != NULL) {
+        if (_blocks != nullptr) {
             break;
         }
         _blockcount /= 2;
     }
 
-    if (_blocks == NULL) {
+    if (_blocks == nullptr) {
         return;
     }
 
@@ -66,7 +72,7 @@ uint8_t DataFlash_MAVLink::remaining_space_in_current_block() {
 
 void DataFlash_MAVLink::enqueue_block(dm_block_queue_t &queue, struct dm_block *block)
 {
-    if (queue.youngest != NULL) {
+    if (queue.youngest != nullptr) {
         queue.youngest->next = block;
     } else {
         queue.oldest = block;
@@ -76,13 +82,13 @@ void DataFlash_MAVLink::enqueue_block(dm_block_queue_t &queue, struct dm_block *
 
 struct DataFlash_MAVLink::dm_block *DataFlash_MAVLink::dequeue_seqno(DataFlash_MAVLink::dm_block_queue_t &queue, uint32_t seqno)
 {
-    struct dm_block *prev = NULL;
-    for (struct dm_block *block=queue.oldest; block != NULL; block=block->next) {
+    struct dm_block *prev = nullptr;
+    for (struct dm_block *block=queue.oldest; block != nullptr; block=block->next) {
         if (block->seqno == seqno) {
-            if (prev == NULL) {
+            if (prev == nullptr) {
                 if (queue.youngest == queue.oldest) {
-                    queue.oldest = NULL;
-                    queue.youngest = NULL;
+                    queue.oldest = nullptr;
+                    queue.youngest = nullptr;
                 } else {
                     queue.oldest = block->next;
                 }
@@ -92,18 +98,18 @@ struct DataFlash_MAVLink::dm_block *DataFlash_MAVLink::dequeue_seqno(DataFlash_M
                 }
                 prev->next = block->next;
             }
-            block->next = NULL;
+            block->next = nullptr;
             return block;
         }
         prev = block;
     }
-    return NULL;
+    return nullptr;
 }
 
 bool DataFlash_MAVLink::free_seqno_from_queue(uint32_t seqno, dm_block_queue_t &queue)
 {
     struct dm_block *block = dequeue_seqno(queue, seqno);
-    if (block != NULL) {
+    if (block != nullptr) {
         block->next = _blocks_free;
         _blocks_free = block;
         _blockcount_free++; // comment me out to expose a bug!
@@ -112,16 +118,27 @@ bool DataFlash_MAVLink::free_seqno_from_queue(uint32_t seqno, dm_block_queue_t &
     return false;
 }
     
+
+bool DataFlash_MAVLink::WritesOK() const
+{
+    if (!_sending_to_client) {
+        return false;
+    }
+    return true;
+}
+
 /* Write a block of data at current offset */
 
 // DM_write: 70734 events, 0 overruns, 167806us elapsed, 2us avg, min 1us max 34us 0.620us rms
-bool DataFlash_MAVLink::WritePrioritisedBlock(const void *pBuffer, uint16_t size, bool is_critical)
+bool DataFlash_MAVLink::_WritePrioritisedBlock(const void *pBuffer, uint16_t size, bool is_critical)
 {
-    if (!_initialised || !_sending_to_client || !_writes_enabled) {
+    if (!semaphore->take_nonblocking()) {
+        dropped++;
         return false;
     }
 
     if (! WriteBlockCheckStartupMessages()) {
+        semaphore->give();
         return false;
     }
 
@@ -130,17 +147,19 @@ bool DataFlash_MAVLink::WritePrioritisedBlock(const void *pBuffer, uint16_t size
             // do not count the startup packets as being dropped...
             dropped++;
         }
+        semaphore->give();
         return false;
     }
 
     uint16_t copied = 0;
 
     while (copied < size) {
-        if (_current_block == NULL) {
+        if (_current_block == nullptr) {
             _current_block = next_block();
-            if (_current_block == NULL) {
+            if (_current_block == nullptr) {
                 // should not happen - there's a sanity check above
                 internal_error();
+                semaphore->give();
                 return false;
             }
         }
@@ -157,9 +176,7 @@ bool DataFlash_MAVLink::WritePrioritisedBlock(const void *pBuffer, uint16_t size
         }
     }
 
-    if (!_writing_startup_messages) {
-        // push_log_blocks();
-    }
+    semaphore->give();
 
     return true;
 }
@@ -168,12 +185,12 @@ bool DataFlash_MAVLink::WritePrioritisedBlock(const void *pBuffer, uint16_t size
 struct DataFlash_MAVLink::dm_block *DataFlash_MAVLink::next_block()
 {
     DataFlash_MAVLink::dm_block *ret = _blocks_free;
-    if (ret != NULL) {
+    if (ret != nullptr) {
         _blocks_free = ret->next;
         _blockcount_free--;
         ret->seqno = _next_seq_num++;
         ret->last_sent = 0;
-        ret->next = NULL;
+        ret->next = nullptr;
         _latest_block_len = 0;
     }
     return ret;
@@ -181,15 +198,15 @@ struct DataFlash_MAVLink::dm_block *DataFlash_MAVLink::next_block()
 
 void DataFlash_MAVLink::free_all_blocks()
 {
-    _blocks_free = NULL;
-    _current_block = NULL;
+    _blocks_free = nullptr;
+    _current_block = nullptr;
 
     _blocks_pending.sent_count = 0;
-    _blocks_pending.oldest = _blocks_pending.youngest = NULL;
+    _blocks_pending.oldest = _blocks_pending.youngest = nullptr;
     _blocks_retry.sent_count = 0;
-    _blocks_retry.oldest = _blocks_retry.youngest = NULL;
+    _blocks_retry.oldest = _blocks_retry.youngest = nullptr;
     _blocks_sent.sent_count = 0;
-    _blocks_sent.oldest = _blocks_sent.youngest = NULL;
+    _blocks_sent.oldest = _blocks_sent.youngest = nullptr;
 
     // add blocks to the free stack:
     for(uint8_t i=0; i < _blockcount; i++) {
@@ -231,7 +248,7 @@ void DataFlash_MAVLink::handle_ack(mavlink_channel_t chan,
             Debug("Starting New Log");
             free_all_blocks();
             // _current_block = next_block();
-            // if (_current_block == NULL) {
+            // if (_current_block == nullptr) {
             //     Debug("No free blocks?!!!\n");
             //     return;
             // }
@@ -265,11 +282,15 @@ void DataFlash_MAVLink::remote_log_block_status_msg(mavlink_channel_t chan,
 {
     mavlink_remote_log_block_status_t packet;
     mavlink_msg_remote_log_block_status_decode(msg, &packet);
+    if (!semaphore->take_nonblocking()) {
+        return;
+    }
     if(packet.status == 0){
         handle_retry(packet.seqno);
     } else{
         handle_ack(chan, msg, packet.seqno);
     }
+    semaphore->give();
 }
 
 void DataFlash_MAVLink::handle_retry(uint32_t seqno)
@@ -279,15 +300,10 @@ void DataFlash_MAVLink::handle_retry(uint32_t seqno)
     }
 
     struct dm_block *victim = dequeue_seqno(_blocks_sent, seqno);
-    if (victim != NULL) {
+    if (victim != nullptr) {
         _last_response_time = AP_HAL::millis();
         enqueue_block(_blocks_retry, victim);
     }
-}
-
-void DataFlash_MAVLink::set_channel(mavlink_channel_t chan)
-{
-    _chan = chan;
 }
 
 void DataFlash_MAVLink::internal_error() {
@@ -338,9 +354,6 @@ void DataFlash_MAVLink::Log_Write_DF_MAV(DataFlash_MAVLink &df)
         state_sent_avg    : (uint8_t)(df.stats.state_sent/df.stats.collection_count),
         state_sent_min    : df.stats.state_sent_min,
         state_sent_max    : df.stats.state_sent_max,
-        // state_retry_avg   : (uint8_t)(df.stats.state_retry/df.stats.collection_count),
-        // state_retry_min    : df.stats.state_retry_min,
-        // state_retry_max    : df.stats.state_retry_max
     };
     WriteBlock(&pkt,sizeof(pkt));
 }
@@ -380,7 +393,7 @@ void DataFlash_MAVLink::stats_log()
 uint8_t DataFlash_MAVLink::stack_size(struct dm_block *stack)
 {
     uint8_t ret = 0;
-    for (struct dm_block *block=stack; block != NULL; block=block->next) {
+    for (struct dm_block *block=stack; block != nullptr; block=block->next) {
         ret++;
     }
     return ret;
@@ -395,6 +408,9 @@ void DataFlash_MAVLink::stats_collect()
     if (!_initialised || !_logging_started) {
         return;
     }
+    if (!semaphore->take_nonblocking()) {
+        return;
+    }
     uint8_t pending = queue_size(_blocks_pending);
     uint8_t sent = queue_size(_blocks_sent);
     uint8_t retry = queue_size(_blocks_retry);
@@ -403,6 +419,8 @@ void DataFlash_MAVLink::stats_collect()
     if (sfree != _blockcount_free) {
         internal_error();
     }
+    semaphore->give();
+
     stats.state_pending += pending;
     stats.state_sent += sent;
     stats.state_free += sfree;
@@ -442,7 +460,7 @@ void DataFlash_MAVLink::stats_collect()
 bool DataFlash_MAVLink::send_log_blocks_from_queue(dm_block_queue_t &queue)
 {
     uint8_t sent_count = 0;
-    while (queue.oldest != NULL) {
+    while (queue.oldest != nullptr) {
         if (sent_count++ > _max_blocks_per_send_blocks) {
             return false;
         }
@@ -451,7 +469,7 @@ bool DataFlash_MAVLink::send_log_blocks_from_queue(dm_block_queue_t &queue)
         }
         queue.sent_count++;
         struct DataFlash_MAVLink::dm_block *tmp = dequeue_seqno(queue,queue.oldest->seqno);
-        if (tmp != NULL) { // should never be NULL
+        if (tmp != nullptr) { // should never be nullptr
             enqueue_block(_blocks_sent, tmp);
         } else {
             internal_error();
@@ -468,13 +486,20 @@ void DataFlash_MAVLink::push_log_blocks()
 
     DataFlash_Backend::WriteMoreStartupMessages();
 
+    if (!semaphore->take_nonblocking()) {
+        return;
+    }
+
     if (! send_log_blocks_from_queue(_blocks_retry)) {
+        semaphore->give();
         return;
     }
 
     if (! send_log_blocks_from_queue(_blocks_pending)) {
+        semaphore->give();
         return;
     }
+    semaphore->give();
 }
 
 void DataFlash_MAVLink::do_resends(uint32_t now)
@@ -489,19 +514,27 @@ void DataFlash_MAVLink::do_resends(uint32_t now)
     }
     uint32_t oldest = now - 100; // 100 milliseconds before resend.  Hmm.
     while (count_to_send-- > 0) {
-        for (struct dm_block *block=_blocks_sent.oldest; block != NULL; block=block->next) {
+        if (!semaphore->take_nonblocking()) {
+            return;
+        }
+        for (struct dm_block *block=_blocks_sent.oldest; block != nullptr; block=block->next) {
             // only want to send blocks every now-and-then:
             if (block->last_sent < oldest) {
                 if (! send_log_block(*block)) {
                     // failed to send the block; try again later....
+                    semaphore->give();
                     return;
                 }
                 stats.resends++;
             }
         }
+        semaphore->give();
     }
 }
 
+// NOTE: any functions called from these periodic functions MUST
+// handle locking of the blocks structures by taking the semaphore
+// appropriately!
 void DataFlash_MAVLink::periodic_10Hz(const uint32_t now)
 {
     do_resends(now);

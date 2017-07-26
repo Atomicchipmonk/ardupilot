@@ -16,6 +16,7 @@
 #include <AP_HAL/AP_HAL.h>
 
 #if CONFIG_HAL_BOARD == HAL_BOARD_PX4 || CONFIG_HAL_BOARD == HAL_BOARD_VRBRAIN
+#include <AP_BoardConfig/AP_BoardConfig.h>
 #include "AP_RangeFinder_PX4_PWM.h"
 
 #include <sys/types.h>
@@ -33,13 +34,17 @@
 
 extern const AP_HAL::HAL& hal;
 
+extern "C" {
+    int pwm_input_main(int, char **);
+};
+
 /* 
    The constructor also initialises the rangefinder. Note that this
    constructor is not called until detect() returns true, so we
    already know that we should setup the rangefinder
 */
 AP_RangeFinder_PX4_PWM::AP_RangeFinder_PX4_PWM(RangeFinder &_ranger, uint8_t instance, RangeFinder::RangeFinder_State &_state) :
-	AP_RangeFinder_Backend(_ranger, instance, _state),
+	AP_RangeFinder_Backend(_ranger, instance, _state, MAV_DISTANCE_SENSOR_UNKNOWN),
     _last_timestamp(0),
     _last_pulse_time_ms(0),
     _disable_time_ms(0),
@@ -80,6 +85,12 @@ AP_RangeFinder_PX4_PWM::~AP_RangeFinder_PX4_PWM()
 */
 bool AP_RangeFinder_PX4_PWM::detect(RangeFinder &_ranger, uint8_t instance)
 {
+#if !defined(CONFIG_ARCH_BOARD_PX4FMU_V1) && \
+    !defined(CONFIG_ARCH_BOARD_AEROFC_V1)
+    if (AP_BoardConfig::px4_start_driver(pwm_input_main, "pwm_input", "start")) {
+        hal.console->printf("started pwm_input driver\n");
+    }
+#endif
     int fd = open(PWMIN0_DEVICE_PATH, O_RDONLY);
     if (fd == -1) {
         return false;

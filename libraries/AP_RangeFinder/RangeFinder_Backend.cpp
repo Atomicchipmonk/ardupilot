@@ -18,14 +18,18 @@
 #include "RangeFinder.h"
 #include "RangeFinder_Backend.h"
 
+extern const AP_HAL::HAL& hal;
+
 /*
   base class constructor. 
   This incorporates initialisation as well.
 */
-AP_RangeFinder_Backend::AP_RangeFinder_Backend(RangeFinder &_ranger, uint8_t instance, RangeFinder::RangeFinder_State &_state) :
+AP_RangeFinder_Backend::AP_RangeFinder_Backend(RangeFinder &_ranger, uint8_t instance, RangeFinder::RangeFinder_State &_state, MAV_DISTANCE_SENSOR _sensor_type) :
         ranger(_ranger),
-        state(_state) 
+        state(_state),
+        sensor_type(_sensor_type)
 {
+    _sem = hal.util->new_semaphore();    
 }
 
 // update status based on distance measurement

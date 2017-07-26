@@ -2,13 +2,13 @@
 
 void Tracker::init_barometer(bool full_calibration)
 {
-    gcs_send_text(MAV_SEVERITY_INFO, "Calibrating barometer");
+    gcs().send_text(MAV_SEVERITY_INFO, "Calibrating barometer");
     if (full_calibration) {
         barometer.calibrate();
     } else {
         barometer.update_calibration();
     }
-    gcs_send_text(MAV_SEVERITY_INFO, "Barometer calibration complete");
+    gcs().send_text(MAV_SEVERITY_INFO, "Barometer calibration complete");
 }
 
 // read the barometer and return the updated altitude in meters
@@ -82,7 +82,7 @@ void Tracker::accel_cal_update() {
     }
     ins.acal_update();
     float trim_roll, trim_pitch;
-    if(ins.get_new_trim(trim_roll, trim_pitch)) {
+    if (ins.get_new_trim(trim_roll, trim_pitch)) {
         ahrs.set_trim(Vector3f(trim_roll, trim_pitch, 0));
     }
 }
@@ -100,7 +100,7 @@ void Tracker::update_GPS(void)
         gps.status() >= AP_GPS::GPS_OK_FIX_3D) {
         last_gps_msg_ms = gps.last_message_time_ms();
         
-        if(ground_start_count > 1) {
+        if (ground_start_count > 1) {
             ground_start_count--;
         } else if (ground_start_count == 1) {
             // We countdown N number of good GPS fixes

@@ -57,14 +57,6 @@ void Tracker::setup()
     // load the default values of variables listed in var_info[]
     AP_Param::setup_sketch_defaults();
 
-    // initialise notify
-    notify.init(false);
-
-    // antenna tracker does not use pre-arm checks or battery failsafe
-    AP_Notify::flags.pre_arm_check = true;
-    AP_Notify::flags.pre_arm_gps_check = true;
-    AP_Notify::flags.failsafe_battery = false;
-
     init_tracker();
 
     // initialise the main loop scheduler
@@ -93,7 +85,7 @@ void Tracker::dataflash_periodic(void)
 void Tracker::one_second_loop()
 {
     // send a heartbeat
-    gcs_send_message(MSG_HEARTBEAT);
+    gcs().send_message(MSG_HEARTBEAT);
 
     // make it possible to change orientation at runtime
     ahrs.set_orientation();
@@ -107,7 +99,7 @@ void Tracker::one_second_loop()
     one_second_counter++;
 
     if (one_second_counter >= 60) {
-        if(g.compass_enabled) {
+        if (g.compass_enabled) {
             compass.save_offsets();
         }
         one_second_counter = 0;
@@ -133,7 +125,7 @@ void Tracker::ten_hz_logging_loop()
 const AP_HAL::HAL& hal = AP_HAL::get_HAL();
 
 Tracker::Tracker(void)
-    : DataFlash{FIRMWARE_STRING}
+    : DataFlash{FIRMWARE_STRING, g.log_bitmask}
 {
     memset(&current_loc, 0, sizeof(current_loc));
     memset(&vehicle, 0, sizeof(vehicle));

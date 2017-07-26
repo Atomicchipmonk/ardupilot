@@ -61,7 +61,7 @@ bool VRBRAINUtil::run_debug_shell(AP_HAL::BetterStream *stream)
     dup2(fd, 1);
     dup2(fd, 2);
     
-    nsh_consolemain(0, NULL);
+    nsh_consolemain(0, nullptr);
     
     // this shouldn't happen
     hal.console->printf("shell exited\n");
@@ -95,8 +95,8 @@ enum VRBRAINUtil::safety_state VRBRAINUtil::safety_switch_state(void)
 void VRBRAINUtil::set_system_clock(uint64_t time_utc_usec)
 {
     timespec ts;
-    ts.tv_sec = time_utc_usec/1.0e6f;
-    ts.tv_nsec = (time_utc_usec % 1000000) * 1000;
+    ts.tv_sec = time_utc_usec/1000000ULL;
+    ts.tv_nsec = (time_utc_usec % 1000000ULL) * 1000UL;
     clock_settime(CLOCK_REALTIME, &ts);    
 }
 
@@ -158,7 +158,7 @@ VRBRAINUtil::perf_counter_t VRBRAINUtil::perf_alloc(VRBRAINUtil::perf_counter_ty
         vrbrain_t = ::PC_INTERVAL;
         break;
     default:
-        return NULL;
+        return nullptr;
     }
     return (perf_counter_t)::perf_alloc(vrbrain_t, name);
 }
