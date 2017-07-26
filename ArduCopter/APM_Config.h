@@ -44,3 +44,14 @@
 //#define USERHOOK_MEDIUMLOOP userhook_MediumLoop();        // for code to be run at 10hz
 //#define USERHOOK_SLOWLOOP userhook_SlowLoop();            // for code to be run at 3.3hz
 //#define USERHOOK_SUPERSLOWLOOP userhook_SuperSlowLoop();  // for code to be run at 1hz
+
+
+# define THROW_HIGH_SPEED       100.0f  // vehicle much reach this total 3D speed in cm/s (or be free 
+# define THROW_VERTICAL_SPEED   30.0f 
+
+# define LAND_DETECTOR_TRIGGER_SEC         2.5f
+# define LAND_DETECTOR_ACCEL_MAX           .1f
+
+# define FLIGHT_MODE_1                  THROW
+
+

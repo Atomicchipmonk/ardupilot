@@ -910,6 +910,13 @@ private:
     bool throw_height_good();
     bool throw_position_good();
 
+    bool record_init(bool ignore_checks);
+    void record_run();
+    bool record_detected();
+    bool record_attitude_good();
+    bool record_height_good();
+    bool record_position_good();
+
     bool rtl_init(bool ignore_checks);
     void rtl_restart_without_terrain();
     void rtl_run();

@@ -98,7 +98,11 @@ bool Copter::set_mode(control_mode_t mode, mode_reason_t reason)
             break;
 
         case THROW:
-            success = throw_init(ignore_checks);
+            success = record_init(ignore_checks);
+            break;
+
+        case RECORD:
+            success = record_init(ignore_checks);
             break;
 
         case AVOID_ADSB:
@@ -235,7 +239,11 @@ void Copter::update_flight_mode()
             break;
 
         case THROW:
-            throw_run();
+            record_run();
+            break;
+
+        case RECORD:
+            record_run();
             break;
 
         case AVOID_ADSB:
@@ -313,6 +321,7 @@ bool Copter::mode_requires_GPS(control_mode_t mode)
         case BRAKE:
         case AVOID_ADSB:
         case THROW:
+        case RECORD:
             return true;
         default:
             return false;
@@ -411,7 +420,7 @@ void Copter::notify_flight_mode(control_mode_t mode)
             notify.set_flight_mode_str("BRAK");
             break;
         case THROW:
-            notify.set_flight_mode_str("THRW");
+            notify.set_flight_mode_str("RECD");
             break;
         case AVOID_ADSB:
             notify.set_flight_mode_str("AVOI");
@@ -477,7 +486,10 @@ void Copter::print_flight_mode(AP_HAL::BetterStream *port, uint8_t mode)
         port->printf("BRAKE");
         break;
     case THROW:
-        port->printf("THROW");
+        port->printf("RECORD");
+        break;
+    case RECORD:
+        port->printf("RECORD");
         break;
     case AVOID_ADSB:
         port->printf("AVOID_ADSB");
